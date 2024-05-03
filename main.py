@@ -5,6 +5,8 @@ from asyncio import run, gather
 from pprint import pprint
 from ccxt.pro import exchanges
 from configparser import ConfigParser
+from utils.entities import Ticker, Order
+
 
 config = ConfigParser()
 config.read('./.config/config.cfg')
@@ -22,7 +24,9 @@ async def place_delayed_order(exchange: ccxt.pro.Exchange, symbol, amount, price
         # break
         print(e)
 
-async def watch_orders_loop(exchange, symbol):
+async def watch_order_loop(exchange: ccxt.pro.Exchange, symbol: str):
+    your_delay = 1
+    await exchange.throttle(your_delay)
     while True:
         try:
             orders = await exchange.watch_orders(symbol)
@@ -44,6 +48,13 @@ async def watch_orders_loop(exchange, symbol):
         except Exception as e:
             # break
             print(e)
+
+async def watch_orders_loop(exchange: ccxt.pro.Exchange, symbols: list):
+    loops = [watch_order_loop(exchange, symbol) for symbol in symbols]
+    # let them run, don't for all tasks cause they execute asynchronously
+    # don't print here
+    await asyncio.gather(*loops)
+    
 
 
 async def watch_balance_loop(exchange):
@@ -71,7 +82,7 @@ async def watch_positions_loop(exchange:ccxt.Exchange):
 
 orderbooks = {}
 
-def print_orderbook(exchange: ccxt.Exchange, symbol, orderbook, limit: int = 5):
+def print_orderbook(exchange: ccxt.pro.Exchange, symbol, orderbook, limit: int = 5):
     # this is a common handler function
     # it is called when any of the orderbook is updated
     # it has access to both the orderbook that was updated
@@ -87,7 +98,7 @@ def print_orderbook(exchange: ccxt.Exchange, symbol, orderbook, limit: int = 5):
     for symbol, orderbook in orderbooks.items():
         print(orderbook['datetime'], symbol, orderbook['asks'][:limit], orderbook['bids'][:limit])
         
-async def watch_orderbook_loop(exchange: ccxt.Exchange, symbol):
+async def watch_orderbook_loop(exchange: ccxt.pro.Exchange, symbol):
     # a call cost of 1 in the queue of subscriptions
     # means one subscription per exchange.rateLimit milliseconds
     your_delay = 1
@@ -101,36 +112,59 @@ async def watch_orderbook_loop(exchange: ccxt.Exchange, symbol):
             print(type(e).__name__, str(e))
 
 
-async def watch_orderbooks_loop(exchange: ccxt.Exchange, symbol_list):
+async def watch_orderbooks_loop(exchange: ccxt.pro.Exchange, symbol_list):
     loops = [watch_orderbook_loop(exchange, symbol) for symbol in symbol_list]
     # let them run, don't for all tasks cause they execute asynchronously
     # don't print here
     await asyncio.gather(*loops)
 
+async def watch_ticker_loop(exchange: ccxt.pro.Exchange, symbol: str):
+    while True:
+        try:
+            tickers = await exchange.watch_ticker(symbol)
+            print(exchange.iso8601(exchange.milliseconds()), 'watch_tickers_loop')
+            pprint(tickers)
+            print('---------------------------------------------------------------')
+        except Exception as e:
+            # break
+            print(e)
+
+async def watch_tickers_loop(exchange: ccxt.pro.Exchange, symbols: list):
+    loops = [watch_ticker_loop(exchange, symbol) for symbol in symbols]
+    # let them run, don't for all tasks cause they execute asynchronously
+    # don't print here
+    await asyncio.gather(*loops)
 
 
 async def main():
-    exchange = ccxt.pro.binanceusdm({
-        'apiKey': API_KEY,
-        'secret': API_SECRET,
-    })
-    exchange.set_sandbox_mode(True)
-    symbol_1 = 'BTC/USDT:USDT'
-    symbol_2 = 'ETH/USDT:USDT'
-    amount = 0.01
-    price = 62000
-    loops = [
-        watch_orderbooks_loop(exchange, symbol_list=[symbol_1, symbol_2]),
-        # watch_orders_loop(exchange, symbol_1),
-        # watch_balance_loop(exchange),
-        # watch_positions_loop(exchange),
-        # place_delayed_order(exchange, symbol, amount, price)
-    ]
-    await gather(*loops)
-    await exchange.close()
+    try:
+        exchange = ccxt.pro.binanceusdm({
+            'apiKey': API_KEY,
+            'secret': API_SECRET,
+        })
+        exchange.set_sandbox_mode(True)
+        symbol_1 = 'BTC/USDT:USDT'
+        symbol_2 = 'ETH/USDT:USDT'
+        loops = [
+            watch_tickers_loop(exchange, [symbol_1, symbol_2]),
+            # watch_orderbooks_loop(exchange, symbol_list=[symbol_1, symbol_2]),
+            # watch_orders_loop(exchange, [symbol_1, symbol_2]),
+            # watch_balance_loop(exchange),
+            # watch_positions_loop(exchange),
+            # place_delayed_order(exchange, symbol, amount, price)
+        ]
+        
+        await gather(*loops)
+        
+    except KeyboardInterrupt:
+        print('Exiting...')
+    except Exception as e:
+        print(type(e).__name__, str(e))
+    finally:
+        await exchange.close()
 
-
-run(main())
+if __name__ == '__main__':
+    asyncio.run(main())
 # import ccxt.pro as ccxtpro
 # from asyncio import get_event_loop, ensure_future
 # from pprint import pprint
@@ -203,3 +237,4 @@ run(main())
 # })
 
 # loop.run_until_complete(watch_orders(exchange))
+
